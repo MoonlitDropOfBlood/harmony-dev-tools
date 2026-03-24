@@ -145,7 +145,7 @@ function createLogWebViewPanel() {
     vscode.ViewColumn.Beside,
     {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.file(path.join(__dirname, '..', '..', 'webview'))]
+      localResourceRoots: [vscode.Uri.file(path.join(__dirname, '..', 'webview'))]
     }
   );
 
