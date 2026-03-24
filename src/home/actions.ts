@@ -132,15 +132,6 @@ export const HARMONY_ACTIONS: HarmonyActionDefinition[] = [
     icon: 'checklist',
     command: COMMANDS.CHECK_ENVIRONMENT,
   },
-  {
-    id: 'open-docs',
-    section: 'Project',
-    label: 'Open HarmonyOS Docs',
-    description: 'Jump to official docs and release notes',
-    tooltip: 'Open the HarmonyOS docs search with quick links to official documentation.',
-    icon: 'book',
-    command: COMMANDS.OPEN_DOCS,
-  },
 ];
 
 export function getHarmonyActionsForSection(section: HarmonyActionSection): HarmonyActionDefinition[] {

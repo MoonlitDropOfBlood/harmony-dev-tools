@@ -194,14 +194,14 @@ class ProjectConfigCodeActionProvider implements vscode.CodeActionProvider {
 
   private createOpenDocsAction(
     title: string,
-    prefill: string,
+    _prefill: string,
     diagnostic: vscode.Diagnostic,
   ): vscode.CodeAction {
     const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
     action.command = {
-      command: COMMANDS.OPEN_DOCS,
+      command: 'vscode.open',
       title,
-      arguments: [prefill],
+      arguments: [vscode.Uri.parse('https://developer.harmonyos.com/cn/docs/documentation/doc-guides/')],
     };
     action.diagnostics = [diagnostic];
     return action;

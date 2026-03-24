@@ -513,13 +513,11 @@ export function activate(context: vscode.ExtensionContext) {
       { "command": "harmony.installHap", "title": "Install HAP to Device", "category": "HarmonyOS" },
       { "command": "harmony.viewLogs", "title": "View Device Logs", "category": "HarmonyOS" },
       { "command": "harmony.previewComponent", "title": "Preview Component", "category": "HarmonyOS", "icon": "$(open-preview)" },
-      { "command": "harmony.formatDocument", "title": "Format ArkTS File", "category": "HarmonyOS" },
       { "command": "harmony.organizeImports", "title": "Organize Imports", "category": "HarmonyOS" },
       { "command": "harmony.extractComponent", "title": "Extract to @Component", "category": "HarmonyOS" },
       { "command": "harmony.extractBuilder", "title": "Extract to @Builder", "category": "HarmonyOS" },
       { "command": "harmony.extractString", "title": "Extract to $r() Resource", "category": "HarmonyOS" },
-      { "command": "harmony.manageDeps", "title": "Manage Dependencies", "category": "HarmonyOS" },
-      { "command": "harmony.openDocs", "title": "Search HarmonyOS Docs", "category": "HarmonyOS" }
+      { "command": "harmony.manageDeps", "title": "Manage Dependencies", "category": "HarmonyOS" }
     ],
 
     "viewsContainers": {

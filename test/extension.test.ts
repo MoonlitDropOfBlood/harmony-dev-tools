@@ -32,14 +32,12 @@ const installHap = vi.fn(async () => undefined);
 const viewLogs = vi.fn(async () => undefined);
 const openWebViewDevTools = vi.fn(async (_commandArg?: unknown) => undefined);
 const previewComponent = vi.fn(async () => undefined);
-const formatDocument = vi.fn(async () => undefined);
 const organizeImports = vi.fn(async () => undefined);
 const extractComponent = vi.fn(async () => undefined);
 const extractBuilder = vi.fn(async () => undefined);
 const extractString = vi.fn(async () => undefined);
 const migrateV1ToV2 = vi.fn(async () => undefined);
 const manageDeps = vi.fn(async () => undefined);
-const openDocs = vi.fn(async () => undefined);
 const openUIInspector = vi.fn(async (_deviceId?: string) => undefined);
 const buildAndRun = vi.fn(async (_options?: any) => undefined);
 const terminalBuildAndRun = vi.fn(async () => undefined);
@@ -191,10 +189,6 @@ vi.mock('../src/preview/panel', () => ({
   previewComponent,
 }));
 
-vi.mock('../src/tools/formatter', () => ({
-  formatDocument,
-}));
-
 vi.mock('../src/tools/importOrganizer', () => ({
   organizeImports,
 }));
@@ -208,10 +202,6 @@ vi.mock('../src/tools/codeActions', () => ({
 
 vi.mock('../src/project/deps', () => ({
   manageDeps,
-}));
-
-vi.mock('../src/tools/docsSearch', () => ({
-  openDocs,
 }));
 
 vi.mock('../src/debug/inspectorPanel', () => ({

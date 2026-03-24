@@ -14,7 +14,6 @@ const SAFE_COMMANDS = [
   'harmony.checkEnvironment',
   'harmony.selectDevice',
   'harmony.clean',
-  'harmony.formatDocument',
   'harmony.organizeImports',
   'harmony.checkApiCompat',
 ];
