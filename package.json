@@ -18,82 +18,20 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages",
-    "Snippets",
-    "Linters",
     "Debuggers"
   ],
   "keywords": [
     "HarmonyOS",
     "HarmonyOS NEXT",
-    "ArkTS",
     "ArkUI",
     "OpenHarmony",
-    "鸿蒙",
-    "ets",
-    "Cangjie",
-    "仓颉"
+    "鸿蒙"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
     "workspaceContains:**/build-profile.json5"
   ],
   "contributes": {
-    "languages": [
-      {
-        "id": "arkts",
-        "aliases": [
-          "ArkTS",
-          "arkts",
-          "ETS"
-        ],
-        "extensions": [
-          ".ets"
-        ],
-        "configuration": "./language-configuration.json",
-        "icon": {
-          "light": "./resources/icons/arkts-light.svg",
-          "dark": "./resources/icons/arkts-dark.svg"
-        }
-      },
-      {
-        "id": "cangjie",
-        "aliases": [
-          "Cangjie",
-          "cangjie",
-          "仓颉"
-        ],
-        "extensions": [
-          ".cj"
-        ],
-        "configuration": "./cangjie-language-configuration.json"
-      }
-    ],
-    "grammars": [
-      {
-        "language": "arkts",
-        "scopeName": "source.arkts",
-        "path": "./syntaxes/arkts.tmLanguage.json",
-        "embeddedLanguages": {
-          "meta.embedded.block.typescript": "typescript"
-        }
-      },
-      {
-        "language": "cangjie",
-        "scopeName": "source.cangjie",
-        "path": "./syntaxes/cangjie.tmLanguage.json"
-      }
-    ],
-    "snippets": [
-      {
-        "language": "arkts",
-        "path": "./snippets/arkts.snippets.json"
-      },
-      {
-        "language": "cangjie",
-        "path": "./snippets/cangjie.snippets.json"
-      }
-    ],
     "jsonValidation": [
       {
         "fileMatch": "**/build-profile.json5",
@@ -462,21 +400,6 @@
           "default": "",
           "description": "Custom path to the HDC executable. Leave empty to auto-detect."
         },
-        "harmony.autoFormatOnSave": {
-          "type": "boolean",
-          "default": false,
-          "description": "Auto format ArkTS files on save"
-        },
-        "harmony.enableCodeLens": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show component references and route info as CodeLens"
-        },
-        "harmony.enableResourceValidation": {
-          "type": "boolean",
-          "default": true,
-          "description": "Validate $r() resource references"
-        },
         "harmony.logLevel": {
           "type": "string",
           "enum": [
@@ -494,20 +417,10 @@
           "minimum": 1000,
           "description": "Refresh interval for the device list and active-device status bar, in milliseconds"
         },
-        "harmony.enableDiagnostics": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable real-time ArkTS diagnostics for type issues, state traps, and common performance anti-patterns"
-        },
         "harmony.enableProjectConfigDiagnostics": {
           "type": "boolean",
           "default": true,
           "description": "Validate build-profile migration, startup page wiring, main_pages.json, routerMap, and Navigation route names"
-        },
-        "harmony.enablePerfLens": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show performance insight CodeLens on build(), ForEach, and component state usage"
         },
         "harmony.enableOhpmInsight": {
           "type": "boolean",
@@ -537,10 +450,10 @@
     "debuggers": [
       {
         "type": "harmonyos",
-        "label": "HarmonyOS Debug",
         "languages": [
-          "arkts"
+          "arkts","ets","ArkTS"
         ],
+        "label": "HarmonyOS Debug",
         "configurationAttributes": {
           "launch": {
             "required": [],

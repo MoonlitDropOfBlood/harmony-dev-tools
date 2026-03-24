@@ -4,7 +4,7 @@ import { HarmonyRegistry, registry } from './core/registry';
 import { ModuleManager } from './core/module';
 import { Logger } from './utils/logger';
 import { createPublicAPI, HarmonyDevToolsAPI } from './core/api';
-import { COMMANDS, LANGUAGE_ID } from './utils/constants';
+import { COMMANDS } from './utils/constants';
 import { getPreferredWorkspaceFolder } from './utils/workspace';
 
 // Module imports — only type references at top level, actual code loaded dynamically
@@ -29,17 +29,11 @@ export function activate(context: vscode.ExtensionContext): HarmonyDevToolsAPI {
   // Activate project detector immediately (lightweight)
   moduleManager.activate('harmony.projectDetector');
 
-  // ---- Layer 1: Language features — lazy on first .ets file ----
-  registerLazyLanguageFeatures(context);
-
   // ---- Layer 1.5: TreeView & Task Provider ----
   registerTreeViewsAndTasks(context);
 
   // ---- Layer 1.5: Debug Configuration Provider ----
   registerDebugProvider(context);
-
-  // ---- Layer 1.8: DX Enhancement — real-time diagnostics, quick fix, perf lens ----
-  registerDxEnhancements(context);
 
   // ---- Layer 2: Command-triggered features — dynamic import ----
   registerLazyCommands(context);
@@ -54,104 +48,6 @@ export function activate(context: vscode.ExtensionContext): HarmonyDevToolsAPI {
 export async function deactivate(): Promise<void> {
   if (moduleManager) {
     await moduleManager.deactivateAll();
-  }
-}
-
-// ---- Layer 1: Auto-activated language features (on .ets file open) ----
-
-function registerLazyLanguageFeatures(context: vscode.ExtensionContext): void {
-  let resourceProvidersPromise:
-    | Promise<{
-        completion: import('./resource/resourceCompletion').ResourceCompletionProvider;
-        definition: import('./resource/resourceDefinition').ResourceDefinitionProvider;
-      }>
-    | undefined;
-
-  const getResourceProviders = async () => {
-    if (!resourceProvidersPromise) {
-      resourceProvidersPromise = Promise.all([
-        import('./resource/resourceCompletion'),
-        import('./resource/resourceDefinition'),
-      ]).then(([completionModule, definitionModule]) => ({
-        completion: new completionModule.ResourceCompletionProvider(),
-        definition: new definitionModule.ResourceDefinitionProvider(),
-      }));
-    }
-    return resourceProvidersPromise;
-  };
-
-  // Completion provider — dynamically loads the completion module
-  context.subscriptions.push(
-    vscode.languages.registerCompletionItemProvider(LANGUAGE_ID, {
-      async provideCompletionItems(document, position, token, completionContext) {
-        const { provideCompletionItems } = await import('./language/completionProvider');
-        return provideCompletionItems(document, position, token, completionContext);
-      },
-    }, '.', '@', '\'', '"')
-  );
-
-  // Hover provider
-  context.subscriptions.push(
-    vscode.languages.registerHoverProvider(LANGUAGE_ID, {
-      async provideHover(document, position, token) {
-        const { provideHover } = await import('./language/hoverProvider');
-        return provideHover(document, position, token);
-      },
-    })
-  );
-
-  // CodeLens provider
-  const codeLensEnabled = vscode.workspace.getConfiguration('harmony').get('enableCodeLens', true);
-  if (codeLensEnabled) {
-    context.subscriptions.push(
-      vscode.languages.registerCodeLensProvider(LANGUAGE_ID, {
-        async provideCodeLenses(document, token) {
-          const { provideCodeLenses } = await import('./language/codeLensProvider');
-          return provideCodeLenses(document, token);
-        },
-      })
-    );
-  }
-
-  // Color provider
-  context.subscriptions.push(
-    vscode.languages.registerColorProvider(LANGUAGE_ID, {
-      async provideDocumentColors(document, token) {
-        const { provideDocumentColors } = await import('./language/colorProvider');
-        return provideDocumentColors(document, token);
-      },
-      async provideColorPresentations(color, colorContext, token) {
-        const { provideColorPresentations } = await import('./language/colorProvider');
-        return provideColorPresentations(color, colorContext, token);
-      },
-    })
-  );
-
-  // $r() Resource completion provider
-  context.subscriptions.push(
-    vscode.languages.registerCompletionItemProvider(LANGUAGE_ID, {
-      async provideCompletionItems(document, position) {
-        const providers = await getResourceProviders();
-        return providers.completion.provideCompletionItems(document, position);
-      },
-    }, '\'', '"', '.')
-  );
-
-  // $r() Definition provider (Ctrl+Click jump to resource)
-  context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(LANGUAGE_ID, {
-      async provideDefinition(document, position) {
-        const providers = await getResourceProviders();
-        return providers.definition.provideDefinition(document, position);
-      },
-    })
-  );
-
-  // $r() Resource validation diagnostics
-  if (vscode.workspace.getConfiguration('harmony').get('enableResourceValidation', true)) {
-    import('./resource/resourceDefinition').then(({ ResourceDiagnosticProvider }) => {
-      context.subscriptions.push(new ResourceDiagnosticProvider());
-    });
   }
 }
 
@@ -248,52 +144,6 @@ function registerDebugProvider(context: vscode.ExtensionContext): void {
       )
     );
   });
-}
-
-// ---- Layer 1.8: DX Enhancement providers ----
-
-function registerDxEnhancements(context: vscode.ExtensionContext): void {
-  const config = vscode.workspace.getConfiguration('harmony');
-
-  // Real-time ArkTS diagnostics (any/unknown, state traps, perf anti-patterns)
-  if (config.get('enableDiagnostics', true)) {
-    import('./language/diagnosticProvider').then(({ createDiagnosticProvider }) => {
-      createDiagnosticProvider(context);
-    });
-
-    // Quick Fix code actions for all diagnostic rules (only meaningful with diagnostics)
-    import('./language/codeFixProvider').then(({ createCodeFixProvider }) => {
-      createCodeFixProvider(context);
-    });
-  }
-
-  if (config.get('enableProjectConfigDiagnostics', true)) {
-    import('./project/projectConfigDiagnostics').then(({ createProjectConfigDiagnosticProvider }) => {
-      createProjectConfigDiagnosticProvider(context);
-    });
-    import('./project/projectConfigCodeActions').then(({ createProjectConfigCodeActions }) => {
-      createProjectConfigCodeActions(context);
-    });
-  }
-
-  // Performance insight CodeLens on build() / ForEach / struct
-  if (config.get('enablePerfLens', true)) {
-    import('./language/perfLens').then(({ createPerfLensProvider }) => {
-      createPerfLensProvider(context);
-    });
-  }
-
-  // Config file hover documentation (build-profile, module, app, oh-package)
-  import('./language/configHoverProvider').then(({ createConfigHoverProvider }) => {
-    createConfigHoverProvider(context);
-  });
-
-  // OHPM dependency insight (outdated deps, CodeLens on oh-package.json5)
-  if (config.get('enableOhpmInsight', true)) {
-    import('./project/ohpmInsight').then(({ createOhpmInsightProvider }) => {
-      createOhpmInsightProvider(context);
-    });
-  }
 }
 
 // ---- Layer 2: Command-triggered features ----

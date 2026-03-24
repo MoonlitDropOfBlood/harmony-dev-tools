@@ -8,7 +8,33 @@ import {
   type DetectedHarmonySdk,
 } from '../utils/harmonySdk';
 import { getDecorators, getComponents, type DecoratorMeta, type ComponentMeta } from '../utils/metadata';
-import { findOnWillApplyThemeUsages, findWithThemeUsages, hasComponentV2Decorator } from '../language/withThemeDiagnostics';
+
+// 简化的实现，替代从 language 模块导入的函数
+function hasComponentV2Decorator(text: string): boolean {
+  return text.includes('@ComponentV2');
+}
+
+function findWithThemeUsages(text: string): Array<{ line: number }> {
+  const lines = text.split('\n');
+  const usages: Array<{ line: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes('WithTheme')) {
+      usages.push({ line: i });
+    }
+  }
+  return usages;
+}
+
+function findOnWillApplyThemeUsages(text: string): Array<{ line: number }> {
+  const lines = text.split('\n');
+  const usages: Array<{ line: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes('onWillApplyTheme')) {
+      usages.push({ line: i });
+    }
+  }
+  return usages;
+}
 
 export interface CompatIssue {
   message: string;
