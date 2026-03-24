@@ -225,11 +225,6 @@ function registerLazyCommands(context: vscode.ExtensionContext): void {
     await previewComponent();
   });
 
-  lazyCommand(COMMANDS.FORMAT_DOCUMENT, async () => {
-    const { formatDocument } = await import('./tools/formatter');
-    await formatDocument();
-  });
-
   lazyCommand(COMMANDS.ORGANIZE_IMPORTS, async () => {
     const { organizeImports } = await import('./tools/importOrganizer');
     await organizeImports();
@@ -253,11 +248,6 @@ function registerLazyCommands(context: vscode.ExtensionContext): void {
   lazyCommand(COMMANDS.MANAGE_DEPS, async () => {
     const { manageDeps } = await import('./project/deps');
     await manageDeps();
-  });
-
-  lazyCommand(COMMANDS.OPEN_DOCS, async () => {
-    const { openDocs } = await import('./tools/docsSearch');
-    await openDocs();
   });
 
   lazyCommand(COMMANDS.UI_INSPECTOR, async (commandArg?: unknown) => {
@@ -301,11 +291,6 @@ function registerLazyCommands(context: vscode.ExtensionContext): void {
   lazyCommand(COMMANDS.MIGRATE_BUILD_PROFILE, async (uri?: vscode.Uri) => {
     const { migrateBuildProfile } = await import('./project/buildProfileMigration');
     await migrateBuildProfile(uri);
-  });
-
-  lazyCommand(COMMANDS.CHECK_API_COMPAT, async () => {
-    const { checkApiCompatibility } = await import('./tools/apiCompatChecker');
-    await checkApiCompatibility();
   });
 
   lazyCommand(COMMANDS.DEVICE_MIRROR, async (commandArg?: unknown) => {

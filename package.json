@@ -134,11 +134,6 @@
         "icon": "$(open-preview)"
       },
       {
-        "command": "harmony.formatDocument",
-        "title": "Format ArkTS File",
-        "category": "HarmonyOS"
-      },
-      {
         "command": "harmony.organizeImports",
         "title": "Organize Imports",
         "category": "HarmonyOS"
@@ -161,11 +156,6 @@
       {
         "command": "harmony.manageDeps",
         "title": "Manage OHPM Dependencies",
-        "category": "HarmonyOS"
-      },
-      {
-        "command": "harmony.openDocs",
-        "title": "Open HarmonyOS Docs Search",
         "category": "HarmonyOS"
       },
       {
@@ -212,11 +202,6 @@
       {
         "command": "harmony.migrateBuildProfile",
         "title": "Upgrade Legacy build-profile",
-        "category": "HarmonyOS"
-      },
-      {
-        "command": "harmony.checkApiCompat",
-        "title": "Check API / SDK Compatibility",
         "category": "HarmonyOS"
       },
       {

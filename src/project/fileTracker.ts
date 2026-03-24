@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { HarmonyEventBus } from '../core/eventBus';
-import { CONFIG_FILES, ETS_EXTENSION } from '../utils/constants';
+import { CONFIG_FILES } from '../utils/constants';
 
 export const TRACKED_FILE_KINDS = [
   'arkts',
@@ -113,7 +113,7 @@ export function classifyHarmonyFile(rootPath: string, fsPath: string): HarmonyTr
     && parts[1] === 'src'
     && parts[2] === 'main'
     && parts[3] === 'ets'
-    && normalizedFile.endsWith(ETS_EXTENSION)
+    && normalizedFile.endsWith('.ets')
   ) {
     return { path: normalizedFile, kind: 'arkts', module: moduleName };
   }
