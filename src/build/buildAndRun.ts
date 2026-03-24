@@ -5,7 +5,7 @@ import { promisify } from 'util';
 import { buildHvigorCommand } from '../utils/hvigor';
 import { extractHvigorFailureSummary, formatHvigorFailureMessage } from '../utils/hvigorOutput';
 import { getPreferredWorkspaceFolder } from '../utils/workspace';
-import { findBuiltHapFiles, readBundleName, readEntryAbility } from '../utils/projectMetadata';
+import { findBuiltHapFiles, readBundleName, readEntryAbility, detectProjectModule } from '../utils/projectMetadata';
 import { buildHdcTargetArgs, execHdc } from '../utils/hdc';
 import { ensureConnectedDevice } from '../device/devices';
 import { resolveSigningProfileInfo, syncAppBundleNameToSigningProfile } from '../project/signingProfile';
@@ -66,7 +66,8 @@ async function selectDevice(): Promise<string | null> {
 
 async function buildHapWithProgress(folder: vscode.WorkspaceFolder): Promise<string | null> {
   const rootPath = folder.uri.fsPath;
-  const command = buildHvigorCommand({ task: 'assembleHap' });
+  const moduleName = await detectProjectModule(folder.uri);
+  const command = buildHvigorCommand({ task: 'assembleHap', module: moduleName });
   const outputChannel = getBuildOutputChannel();
 
   return vscode.window.withProgress(

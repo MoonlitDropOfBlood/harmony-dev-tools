@@ -52,3 +52,34 @@ export async function findBuiltHapFiles(rootUri: vscode.Uri): Promise<vscode.Uri
     '**/node_modules/**',
   );
 }
+
+export async function detectProjectModule(rootUri: vscode.Uri): Promise<string | undefined> {
+  try {
+    const buildProfileUri = vscode.Uri.joinPath(rootUri, CONFIG_FILES.BUILD_PROFILE);
+    const content = await vscode.workspace.fs.readFile(buildProfileUri);
+    const text = Buffer.from(content).toString('utf8');
+
+    const moduleNames: string[] = [];
+    
+    // Try multiple regex patterns to match module names in JSON5 format
+    // Pattern 1: name: "entry" or name: 'entry' with optional whitespace
+    const nameRegex1 = /name\s*:\s*(?:'([^']+)'|"([^"]+)")/g;
+    let match;
+    while ((match = nameRegex1.exec(text)) !== null) {
+      const moduleName = match[1] || match[2];
+      if (moduleName) {
+        moduleNames.push(moduleName);
+      }
+    }
+
+    if (moduleNames.length === 0) {
+      return undefined;
+    }
+
+    const entryModule = moduleNames.find(name => name === 'entry');
+    return entryModule || moduleNames[0];
+  } catch (err) {
+    console.warn('Failed to detect project module:', err);
+    return undefined;
+  }
+}

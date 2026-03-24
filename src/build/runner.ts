@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { buildHvigorCommand } from '../utils/hvigor';
 import { getPreferredWorkspaceFolder } from '../utils/workspace';
+import { detectProjectModule } from '../utils/projectMetadata';
 
 export async function buildHap(): Promise<void> {
   const folder = getPreferredWorkspaceFolder();
@@ -9,12 +10,14 @@ export async function buildHap(): Promise<void> {
     return;
   }
 
+  const moduleName = await detectProjectModule(folder.uri);
+
   const task = new vscode.Task(
     { type: 'hvigor', task: 'assembleHap' },
     folder,
     'Build HAP',
     'hvigor',
-    new vscode.ShellExecution(buildHvigorCommand({ task: 'assembleHap' }), { cwd: folder.uri.fsPath })
+    new vscode.ShellExecution(buildHvigorCommand({ task: 'assembleHap', module: moduleName }), { cwd: folder.uri.fsPath })
   );
   await vscode.tasks.executeTask(task);
 }

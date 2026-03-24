@@ -1,13 +1,12 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { buildHdcTargetArgs, spawnHdc } from '../utils/hdc';
 import { extractDeviceIdFromCommandArg } from './commandArgs';
 import { ensureConnectedDevice } from './devices';
+import { readBundleName } from '../utils/projectMetadata';
 
 let logProcess: Awaited<ReturnType<typeof spawnHdc>> | null = null;
-let logWebViewPanel: vscode.WebviewPanel | null = null;
-let logBuffer: string[] = [];
-let isProcessing: boolean = false;
+let webviewPanel: vscode.WebviewPanel | undefined;
+let panelDisposables: vscode.Disposable[] = [];
 
 interface LogEntry {
   timestamp: string;
@@ -15,82 +14,30 @@ interface LogEntry {
   pid: string;
   tid: string;
   tag: string;
+  processName: string;
   message: string;
-  process?: string;
 }
 
-interface FilterOptions {
-  levels: Set<string>;
-  processes: Set<string>;
-  keyword: string;
-  useRegex: boolean;
-}
+let filterLevel: string | null = null;
+let filterKeyword: string = '';
+let useRegex: boolean = false;
+let filterProcessName: string = '';
 
-let currentFilters: FilterOptions = {
-  levels: new Set(['DEBUG', 'INFO', 'WARN', 'ERROR']),
-  processes: new Set(),
-  keyword: '',
-  useRegex: false
-};
-
-function processLogBuffer() {
-  if (isProcessing || !logBuffer.length || !logWebViewPanel) return;
-  
-  isProcessing = true;
-  
-  // Process in batches
-  const batchSize = 100;
-  const batch = logBuffer.splice(0, batchSize);
-  const parsedLogs = batch.map(parseLogLine).filter((log): log is LogEntry => log !== null);
-  
-  if (parsedLogs.length > 0) {
-    logWebViewPanel.webview.postMessage({ type: 'logs', logs: parsedLogs });
-  }
-  
-  setTimeout(() => {
-    isProcessing = false;
-    if (logBuffer.length > 0) {
-      processLogBuffer();
-    }
-  }, 10);
-}
-
-function parseLogLine(line: string): LogEntry | null {
-  // Hilog format: [timestamp] [level] [pid/tid] [tag] message
-  const regex = /\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\] \[(DEBUG|INFO|WARN|ERROR)\] \[(\d+)\/(\d+)\] \[(.*?)\] (.*)/;
-  const match = line.match(regex);
-  
-  if (match) {
-    return {
-      timestamp: match[1],
-      level: match[2] as 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
-      pid: match[3],
-      tid: match[4],
-      tag: match[5],
-      message: match[6]
-    };
-  }
-  
-  // Fallback for error lines
-  if (line.startsWith('[ERROR]')) {
-    return {
-      timestamp: new Date().toISOString().slice(0, 23).replace('T', ' '),
-      level: 'ERROR',
-      pid: '',
-      tid: '',
-      tag: 'System',
-      message: line.substring(7)
-    };
-  }
-  
-  return null;
-}
+const MAX_LOG_LINES = 10000;
+const FLUSH_INTERVAL = 100;
+let logBuffer: string[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let totalLines = 0;
 
 export async function viewLogs(deviceArg?: unknown): Promise<void> {
   if (logProcess) {
     logProcess.kill();
     logProcess = null;
   }
+
+  stopFlushTimer();
+  logBuffer = [];
+  totalLines = 0;
 
   try {
     const device = await ensureConnectedDevice({
@@ -101,249 +48,667 @@ export async function viewLogs(deviceArg?: unknown): Promise<void> {
       return;
     }
 
-    if (!logWebViewPanel) {
-      createLogWebViewPanel();
+    if (webviewPanel) {
+      webviewPanel.reveal(vscode.ViewColumn.Beside);
+      webviewPanel.title = `HarmonyOS Logs: ${device.id}`;
     } else {
-      logWebViewPanel.reveal();
+      webviewPanel = vscode.window.createWebviewPanel(
+        'harmonyLogViewer',
+        `HarmonyOS Logs: ${device.id}`,
+        vscode.ViewColumn.Beside,
+        { enableScripts: true, retainContextWhenHidden: true }
+      );
+
+      webviewPanel.iconPath = new vscode.ThemeIcon('output');
+
+      webviewPanel.onDidDispose(() => {
+        webviewPanel = undefined;
+        panelDisposables.forEach(d => d.dispose());
+        panelDisposables = [];
+        if (logProcess) {
+          logProcess.kill();
+          logProcess = null;
+        }
+        stopFlushTimer();
+      });
+
+      webviewPanel.webview.onDidReceiveMessage((message) => {
+        if (message.command === 'updateFilters') {
+          filterLevel = message.filterLevel;
+          filterProcessName = message.filterProcessName;
+          filterKeyword = message.filterKeyword;
+          useRegex = message.useRegex;
+        } else if (message.command === 'clearFilters') {
+          filterLevel = null;
+          filterProcessName = '';
+          filterKeyword = '';
+          useRegex = false;
+        }
+      });
+
+      webviewPanel.webview.html = getLogViewerHtml();
+
+      sendFilterStateToWebview();
     }
 
-    logBuffer = [];
+    await autoSetProcessFilter();
+
     const proc = await spawnHdc([...buildHdcTargetArgs(device.id), 'hilog'], { stdio: ['ignore', 'pipe', 'pipe'] });
     logProcess = proc;
 
+    startFlushTimer();
+
     proc.stdout?.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(line => line.trim());
-      logBuffer.push(...lines);
-      processLogBuffer();
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        if (line.trim()) {
+          processLogLine(line.trim());
+        }
+      }
     });
 
     proc.stderr?.on('data', (data: Buffer) => {
-      const errorLines = data.toString().split('\n').filter(line => line.trim());
-      errorLines.forEach(line => {
-        logBuffer.push(`[ERROR] ${line}`);
-      });
-      processLogBuffer();
+      const errorLines = data.toString().split('\n');
+      for (const line of errorLines) {
+        if (line.trim()) {
+          bufferLog(`[ERROR] ${line}`);
+        }
+      }
     });
 
     proc.on('close', () => {
-      if (logWebViewPanel) {
-        logWebViewPanel.webview.postMessage({ type: 'log-ended' });
-      }
+      stopFlushTimer();
+      flushBuffer();
       if (logProcess === proc) {
         logProcess = null;
       }
     });
+
   } catch (err) {
     vscode.window.showErrorMessage(`Failed to start log viewer: ${err}`);
   }
 }
 
-function createLogWebViewPanel() {
-  logWebViewPanel = vscode.window.createWebviewPanel(
-    'harmonyHilog',
-    'HarmonyOS Logs',
-    vscode.ViewColumn.Beside,
-    {
-      enableScripts: true,
-      localResourceRoots: [vscode.Uri.file(path.join(__dirname, '..', 'webview'))]
-    }
-  );
-
-  const webview = logWebViewPanel.webview;
-  webview.html = getWebViewHtml(webview);
-
-  webview.onDidReceiveMessage((message) => {
-    switch (message.type) {
-      case 'update-filters':
-        currentFilters = message.filters;
-        break;
-      case 'clear-logs':
-        logBuffer = [];
-        webview.postMessage({ type: 'clear-logs' });
-        break;
-    }
-  });
-
-  logWebViewPanel.onDidDispose(() => {
-    if (logProcess) {
-      logProcess.kill();
-      logProcess = null;
-    }
-    logWebViewPanel = null;
-    logBuffer = [];
-  });
-}
-
-function getWebViewHtml(webview: vscode.Webview): string {
-  return `
-<!DOCTYPE html>
-<html lang="en">
+function getLogViewerHtml(): string {
+  return `<!DOCTYPE html>
+<html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HarmonyOS Logs</title>
   <style>
-    body { font-family: monospace; margin: 0; padding: 10px; background-color: #1e1e1e; color: #d4d4d4; }
-    .filter-bar { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-    .filter-group { display: flex; flex-direction: column; gap: 5px; }
-    .filter-group label { font-size: 12px; color: #999; }
-    .filter-group input, .filter-group select, .filter-group button { padding: 5px; background-color: #252526; border: 1px solid #3e3e42; color: #d4d4d4; border-radius: 3px; }
-    .filter-group button { cursor: pointer; }
-    .filter-group button:hover { background-color: #2d2d30; }
-    .log-container { height: calc(100vh - 120px); overflow-y: auto; border: 1px solid #3e3e42; border-radius: 3px; }
-    .log-entry { padding: 2px 10px; border-bottom: 1px solid #252526; }
-    .log-entry:hover { background-color: #252526; }
-    .log-debug { color: #6a9955; }
-    .log-info { color: #d4d4d4; }
-    .log-warn { color: #d7ba7d; }
-    .log-error { color: #f48771; }
-    .log-timestamp { color: #858585; font-size: 12px; margin-right: 10px; }
-    .log-pid { color: #9cdcfe; font-size: 12px; margin-right: 10px; }
-    .log-tag { color: #d16969; font-size: 12px; margin-right: 10px; }
-    .log-message { word-break: break-all; }
-    .highlight { background-color: rgba(255, 255, 0, 0.3); }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif, monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Toolbar styles */
+    .toolbar {
+      background: #2d2d2d;
+      border-bottom: 1px solid #444;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+
+    .toolbar label {
+      font-size: 12px;
+      color: #888;
+      margin-right: 4px;
+    }
+
+    .toolbar select,
+    .toolbar input[type="text"] {
+      background: #3c3c3c;
+      color: #ccc;
+      border: 1px solid #555;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .toolbar select {
+      min-width: 100px;
+    }
+
+    .toolbar input[type="text"] {
+      min-width: 150px;
+    }
+
+    .toolbar .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .toolbar input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+
+    .toolbar button {
+      background: #3c3c3c;
+      color: #ccc;
+      border: 1px solid #555;
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .toolbar button:hover {
+      background: #4c4c4c;
+    }
+
+    .toolbar .sep {
+      width: 1px;
+      height: 20px;
+      background: #444;
+      margin: 0 4px;
+    }
+
+    .toolbar .log-count {
+      font-size: 12px;
+      color: #888;
+      margin-left: auto;
+      padding: 4px 8px;
+      background: #3c3c3c;
+      border-radius: 4px;
+    }
+
+    .toolbar .log-count.warning {
+      color: #dcdcaa;
+      background: #4a4a2a;
+    }
+
+    /* Log area styles */
+    .log-container {
+      flex: 1;
+      overflow: auto;
+      padding: 8px 12px;
+    }
+
+    .log-list {
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .log-line {
+      padding: 2px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-line:hover {
+      background: #2a2d2e;
+    }
+
+    /* Log level colors */
+    .level-DEBUG { color: #569cd6; }
+    .level-INFO { color: #4ec9b0; }
+    .level-WARN { color: #dcdcaa; }
+    .level-ERROR { color: #f44747; }
+
+    .placeholder {
+      color: #666;
+      text-align: center;
+      padding: 60px 20px;
+    }
+
+    .placeholder .icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .placeholder .message {
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
-  <div class="filter-bar">
-    <div class="filter-group">
-      <label>Log Levels</label>
-      <div style="display: flex; gap: 5px;">
-        <label><input type="checkbox" class="level-filter" value="DEBUG" checked> DEBUG</label>
-        <label><input type="checkbox" class="level-filter" value="INFO" checked> INFO</label>
-        <label><input type="checkbox" class="level-filter" value="WARN" checked> WARN</label>
-        <label><input type="checkbox" class="level-filter" value="ERROR" checked> ERROR</label>
+  <div class="toolbar">
+    <label for="levelSelect">Level:</label>
+    <select id="levelSelect">
+      <option value="All">All</option>
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARN">WARN</option>
+      <option value="ERROR">ERROR</option>
+    </select>
+
+    <div class="sep"></div>
+
+    <label for="processInput">Process:</label>
+    <input type="text" id="processInput" placeholder="Process name">
+
+    <div class="sep"></div>
+
+    <label for="keywordInput">Keyword:</label>
+    <input type="text" id="keywordInput" placeholder="Search keyword">
+
+    <div class="checkbox-group">
+      <input type="checkbox" id="regexCheckbox">
+      <label for="regexCheckbox">正则</label>
+    </div>
+
+    <div class="sep"></div>
+
+    <button onclick="clearFilters()">清除</button>
+
+    <div class="sep"></div>
+
+    <span class="log-count" id="logCount">0 / 10000</span>
+  </div>
+
+  <div class="log-container">
+    <div class="log-list" id="logList">
+      <div class="placeholder">
+        <div class="icon">📋</div>
+        <div class="message">Logs will appear here</div>
       </div>
-    </div>
-    <div class="filter-group">
-      <label>Processes</label>
-      <select class="process-filter" multiple style="min-width: 150px;"></select>
-    </div>
-    <div class="filter-group">
-      <label>Keyword</label>
-      <div style="display: flex; gap: 5px;">
-        <input type="text" class="keyword-filter" placeholder="Search...">
-        <label><input type="checkbox" class="regex-toggle"> Regex</label>
-      </div>
-    </div>
-    <div class="filter-group">
-      <label style="visibility: hidden;">Actions</label>
-      <button class="clear-btn">Clear</button>
     </div>
   </div>
-  <div class="log-container" id="log-container"></div>
 
   <script>
-    const vscode = acquireVsCodeApi();
-    
-    let logs = [];
-    let filters = {
-      levels: new Set(['DEBUG', 'INFO', 'WARN', 'ERROR']),
-      processes: new Set(),
-      keyword: '',
-      useRegex: false
-    };
-    
-    // Event listeners for filters
-    document.querySelectorAll('.level-filter').forEach(checkbox => {
-      checkbox.addEventListener('change', updateFilters);
-    });
-    
-    document.querySelector('.keyword-filter').addEventListener('input', updateFilters);
-    document.querySelector('.regex-toggle').addEventListener('change', updateFilters);
-    document.querySelector('.clear-btn').addEventListener('click', () => {
-      vscode.postMessage({ type: 'clear-logs' });
-      logs = [];
-      renderLogs();
-    });
-    
-    function updateFilters() {
-      // Update levels
-      filters.levels = new Set();
-      document.querySelectorAll('.level-filter:checked').forEach(checkbox => {
-        filters.levels.add(checkbox.value);
-      });
-      
-      // Update keyword
-      filters.keyword = document.querySelector('.keyword-filter').value;
-      filters.useRegex = document.querySelector('.regex-toggle').checked;
-      
-      vscode.postMessage({ type: 'update-filters', filters });
-      renderLogs();
+    const vscodeApi = acquireVsCodeApi();
+    const logList = document.getElementById('logList');
+    const levelSelect = document.getElementById('levelSelect');
+    const processInput = document.getElementById('processInput');
+    const keywordInput = document.getElementById('keywordInput');
+    const regexCheckbox = document.getElementById('regexCheckbox');
+    const logCount = document.getElementById('logCount');
+
+    // Constants
+    const MAX_LOG_LINES = 10000;
+
+    // Store logs
+    let allLogs = [];
+    let filterLevel = 'All';
+    let filterProcessName = '';
+    let filterKeyword = '';
+    let useRegex = false;
+
+    // Helper function to trim old logs
+    function trimOldLogs() {
+      if (allLogs.length > MAX_LOG_LINES) {
+        allLogs = allLogs.slice(allLogs.length - MAX_LOG_LINES);
+      }
     }
-    
-    function renderLogs() {
-      const container = document.getElementById('log-container');
-      const filteredLogs = logs.filter(log => {
-        // Filter by level
-        if (!filters.levels.has(log.level)) return false;
-        
-        // Filter by keyword
-        if (filters.keyword) {
-          const content = log.timestamp + ' ' + log.pid + ' ' + log.tag + ' ' + log.message;
-          if (filters.useRegex) {
+
+    // Helper function to update log count display
+    function updateLogCount() {
+      if (logCount) {
+        logCount.textContent = allLogs.length + ' / ' + MAX_LOG_LINES;
+        if (allLogs.length >= MAX_LOG_LINES) {
+          logCount.classList.add('warning');
+        } else {
+          logCount.classList.remove('warning');
+        }
+      }
+    }
+
+    // Filter controls
+    levelSelect.addEventListener('change', (e) => {
+      filterLevel = e.target.value;
+      updateExtensionFilters();
+      applyFilters();
+    });
+
+    processInput.addEventListener('input', (e) => {
+      filterProcessName = e.target.value;
+      updateExtensionFilters();
+      applyFilters();
+    });
+
+    keywordInput.addEventListener('input', (e) => {
+      filterKeyword = e.target.value;
+      updateExtensionFilters();
+      applyFilters();
+    });
+
+    regexCheckbox.addEventListener('change', (e) => {
+      useRegex = e.target.checked;
+      updateExtensionFilters();
+      applyFilters();
+    });
+
+    function updateExtensionFilters() {
+      vscodeApi.postMessage({
+        command: 'updateFilters',
+        filterLevel: filterLevel,
+        filterProcessName: filterProcessName,
+        filterKeyword: filterKeyword,
+        useRegex: useRegex
+      });
+    }
+
+    function clearFilters() {
+      filterLevel = 'All';
+      filterProcessName = '';
+      filterKeyword = '';
+      useRegex = false;
+      levelSelect.value = 'All';
+      processInput.value = '';
+      keywordInput.value = '';
+      regexCheckbox.checked = false;
+      vscodeApi.postMessage({
+        command: 'clearFilters'
+      });
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const filtered = allLogs.filter(log => {
+        if (filterLevel !== 'All') {
+          const levelPattern = '\\[' + filterLevel + '\\]';
+          const regex = new RegExp(levelPattern);
+          if (!regex.test(log)) {
+            return false;
+          }
+        }
+        if (filterProcessName && !log.toLowerCase().includes(filterProcessName.toLowerCase())) {
+          return false;
+        }
+        if (filterKeyword) {
+          const content = log;
+          if (useRegex) {
             try {
-              const regex = new RegExp(filters.keyword);
+              const regex = new RegExp(filterKeyword, 'i');
               if (!regex.test(content)) return false;
             } catch (e) {
-              // Invalid regex, skip
+              return false;
             }
           } else {
-            if (!content.includes(filters.keyword)) return false;
+            if (!content.toLowerCase().includes(filterKeyword.toLowerCase())) return false;
           }
         }
-        
         return true;
       });
-      
-      container.innerHTML = filteredLogs.map(log => {
-        let message = log.message;
-        if (filters.keyword) {
-          if (filters.useRegex) {
-            try {
-              const regex = new RegExp(filters.keyword, 'g');
-              message = message.replace(regex, '<span class="highlight">$&</span>');
-            } catch (e) {}
-          } else {
-            message = message.replace(new RegExp(filters.keyword, 'g'), '<span class="highlight">$&</span>');
-          }
-        }
-        
-        return '<div class="log-entry log-' + log.level.toLowerCase() + '">' +
-          '<span class="log-timestamp">' + log.timestamp + '</span>' +
-          '<span class="log-pid">' + log.pid + '</span>' +
-          '<span class="log-tag">' + log.tag + '</span>' +
-          '<span class="log-message">' + message + '</span>' +
-          '</div>';
-      }).join('');
-      
-      // Auto scroll to bottom
-      container.scrollTop = container.scrollHeight;
+
+      renderLogs(filtered);
     }
-    
-    window.addEventListener('message', event => {
-      const message = event.data;
-      switch (message.type) {
-        case 'logs':
-          logs.push(...message.logs);
-          // Limit log count to prevent memory issues
-          if (logs.length > 10000) {
-            logs = logs.slice(logs.length - 10000);
-          }
-          renderLogs();
-          break;
-        case 'log-ended':
-          logs.push({ timestamp: new Date().toISOString().slice(0, 23).replace('T', ' '), level: 'INFO', pid: '', tag: 'System', message: 'Log stream ended' });
-          renderLogs();
-          break;
-        case 'clear-logs':
-          logs = [];
-          renderLogs();
-          break;
+
+    function renderLogs(logs) {
+      if (logs.length === 0) {
+        logList.innerHTML = '<div class="placeholder"><div class="icon">📋</div><div class="message">No logs to display</div></div>';
+        return;
+      }
+
+      logList.innerHTML = logs.map(log => {
+        let levelClass = '';
+        if (log.includes('[DEBUG]')) levelClass = 'level-DEBUG';
+        else if (log.includes('[INFO]')) levelClass = 'level-INFO';
+        else if (log.includes('[WARN]')) levelClass = 'level-WARN';
+        else if (log.includes('[ERROR]')) levelClass = 'level-ERROR';
+        
+        return '<div class="log-line ' + levelClass + '">' + escapeHtml(log) + '</div>';
+      }).join('');
+
+      logList.scrollTop = logList.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Handle messages from extension
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (msg.command === 'addLog') {
+        allLogs.push(msg.line);
+        trimOldLogs();
+        updateLogCount();
+        applyFilters();
+      } else if (msg.command === 'addLogs') {
+        allLogs.push(...msg.lines);
+        trimOldLogs();
+        updateLogCount();
+        applyFilters();
+      } else if (msg.command === 'clearLogs') {
+        allLogs = [];
+        updateLogCount();
+        renderLogs(allLogs);
+      } else if (msg.command === 'setFilterState') {
+        filterLevel = msg.filterLevel;
+        filterProcessName = msg.filterProcessName;
+        filterKeyword = msg.filterKeyword;
+        useRegex = msg.useRegex;
+
+        levelSelect.value = filterLevel;
+        processInput.value = filterProcessName;
+        keywordInput.value = filterKeyword;
+        regexCheckbox.checked = useRegex;
+
+        applyFilters();
+      } else if (msg.command === 'setProcessName') {
+        filterProcessName = msg.processName;
+        processInput.value = msg.processName;
+        applyFilters();
+        updateExtensionFilters();
       }
     });
   </script>
 </body>
-</html>
-`;
+</html>`;
 }
+
+function sendFilterStateToWebview(): void {
+  if (!webviewPanel) {
+    return;
+  }
+  webviewPanel.webview.postMessage({
+    command: 'setFilterState',
+    filterLevel: filterLevel || 'All',
+    filterProcessName: filterProcessName,
+    filterKeyword: filterKeyword,
+    useRegex: useRegex
+  });
+}
+
+function bufferLog(line: string): void {
+  // Remove the hard limit - let WebView handle the 10000 line limit
+  logBuffer.push(line);
+  
+  if (logBuffer.length >= FLUSH_INTERVAL) {
+    flushBuffer();
+  }
+}
+
+function flushBuffer(): void {
+  if (logBuffer.length === 0) {
+    return;
+  }
+  
+  if (webviewPanel) {
+    webviewPanel.webview.postMessage({
+      command: 'addLogs',
+      lines: logBuffer
+    });
+  }
+  
+  logBuffer = [];
+}
+
+function startFlushTimer(): void {
+  if (flushTimer) {
+    clearInterval(flushTimer);
+  }
+  flushTimer = setInterval(() => {
+    flushBuffer();
+  }, 200);
+}
+
+function stopFlushTimer(): void {
+  if (flushTimer) {
+    clearInterval(flushTimer);
+    flushTimer = null;
+  }
+}
+
+async function autoSetProcessFilter(): Promise<void> {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
+    return;
+  }
+
+  const rootUri = workspaceFolders[0].uri;
+  const bundleName = await readBundleName(rootUri);
+  
+  if (bundleName) {
+    filterProcessName = bundleName;
+    if (webviewPanel) {
+      webviewPanel.webview.postMessage({
+        command: 'setProcessName',
+        processName: bundleName
+      });
+    }
+  }
+}
+
+function processLogLine(line: string): void {
+  const logEntry = parseLogLine(line);
+
+  if (!logEntry) {
+    // For unparsable lines, check keyword filter only (include processName in check)
+    if (shouldShowLog('INFO', line, '')) {
+      bufferLog(line);
+    }
+    return;
+  }
+
+  if (!shouldShowLog(logEntry.level, logEntry.message, logEntry.processName)) {
+    return;
+  }
+
+  const processInfo = logEntry.processName
+    ? `${logEntry.processName}(${logEntry.pid})`
+    : logEntry.pid;
+  const formatted = `${logEntry.timestamp} [${logEntry.level}] ${processInfo}/${logEntry.tid} [${logEntry.tag}] ${logEntry.message}`;
+  bufferLog(formatted);
+}
+
+function parseLogLine(line: string): LogEntry | null {
+  const regex1 = /\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\]\s+\[(DEBUG|INFO|WARN|ERROR)\]\s+\[(\d+)\/(\d+)\]\s+\[(.*?)\]\s+(.*)/;
+  let match = line.match(regex1);
+  
+  if (match) {
+    return {
+      timestamp: match[1],
+      level: match[2] as 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
+      pid: match[3],
+      tid: match[4],
+      tag: match[5],
+      processName: '',
+      message: match[6]
+    };
+  }
+  
+  const regex2 = /(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+(.*?):\s+(.*)/;
+  match = line.match(regex2);
+  if (match) {
+    const levelMap: { [key: string]: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' } = {
+      'V': 'DEBUG', 'D': 'DEBUG', 'I': 'INFO', 'W': 'WARN', 'E': 'ERROR', 'F': 'ERROR'
+    };
+    return {
+      timestamp: match[1],
+      level: levelMap[match[4]] || 'INFO',
+      pid: match[2],
+      tid: match[3],
+      tag: match[5],
+      processName: '',
+      message: match[6]
+    };
+  }
+
+  const regex3 = /^(\S+)\s+\((\d+)\)\s+\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\]\s+\[(DEBUG|INFO|WARN|ERROR)\]\s+\[(\d+)\/(\d+)\]\s+\[(.*?)\]\s+(.*)/;
+  match = line.match(regex3);
+  if (match) {
+    return {
+      timestamp: match[3],
+      level: match[4] as 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
+      pid: match[5],
+      tid: match[6],
+      tag: match[7],
+      processName: match[1],
+      message: match[8]
+    };
+  }
+
+  const regex4 = /(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(\S+)\s+\((\d+)\)\s+([VDIWEF])\s+(.*?):\s+(.*)/;
+  match = line.match(regex4);
+  if (match) {
+    const levelMap: { [key: string]: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' } = {
+      'V': 'DEBUG', 'D': 'DEBUG', 'I': 'INFO', 'W': 'WARN', 'E': 'ERROR', 'F': 'ERROR'
+    };
+    return {
+      timestamp: match[1],
+      level: levelMap[match[4]] || 'INFO',
+      pid: match[3],
+      tid: '0',
+      tag: match[5],
+      processName: match[2],
+      message: match[6]
+    };
+  }
+  
+  const regex5 = /^(DEBUG|INFO|WARN|ERROR)\s*[:\-]?\s*(.*)/i;
+  match = line.match(regex5);
+  if (match) {
+    return {
+      timestamp: new Date().toISOString().slice(0, 23).replace('T', ' '),
+      level: match[1].toUpperCase() as 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
+      pid: '',
+      tid: '',
+      tag: 'App',
+      processName: '',
+      message: match[2]
+    };
+  }
+  
+  return null;
+}
+
+function shouldShowLog(level: string, message: string, processName: string): boolean {
+  // Filter by log level - filterLevel can be null, 'All', or a specific level
+  if (filterLevel && filterLevel !== 'All' && level !== filterLevel) {
+    return false;
+  }
+
+  // Filter by process name - if processName is empty, only show if no filter is set
+  if (filterProcessName) {
+    const processNameLower = processName.toLowerCase();
+    const filterLower = filterProcessName.toLowerCase();
+    if (!processNameLower.includes(filterLower)) {
+      return false;
+    }
+  }
+
+  // Filter by keyword
+  if (filterKeyword) {
+    const content = (level + ' ' + message + ' ' + processName).toLowerCase();
+    const keywordLower = filterKeyword.toLowerCase();
+    if (useRegex) {
+      try {
+        const regex = new RegExp(filterKeyword, 'i');
+        return regex.test(content);
+      } catch (e) {
+        return false;
+      }
+    } else {
+      return content.includes(keywordLower);
+    }
+  }
+
+  return true;
+}
+
+

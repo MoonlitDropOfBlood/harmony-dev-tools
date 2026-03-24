@@ -11,8 +11,17 @@ export function getHvigorExecutable(platform: NodeJS.Platform = process.platform
 export function buildHvigorCommand(options: HvigorCommandOptions): string {
   const platform = options.platform ?? process.platform;
   const executable = getHvigorExecutable(platform);
-  const modulePart = options.module ? `:${options.module}:` : '';
-  const command = `${executable} ${modulePart}${options.task} --no-daemon`;
+
+  // Build command using DevEco Studio format: --mode module -p module=entry@default
+  const parts: string[] = [executable];
+
+  if (options.module) {
+    parts.push('--mode', 'module', '-p', `module=${options.module}@default`);
+  }
+
+  parts.push(options.task, '--no-daemon');
+
+  const command = parts.join(' ');
 
   if (platform === 'win32') {
     return command;
