@@ -50,7 +50,7 @@
   - `programmatic` TR-4.2: 确认所有文件语法正确
 - **Notes**: 使用 grep 等工具查找对语言模块的引用
 
-## [ ] Task 5: 验证项目构建和运行
+## [x] Task 5: 验证项目构建和运行
 - **Priority**: P0
 - **Depends On**: Task 2, Task 3, Task 4
 - **Description**: 
@@ -60,9 +60,9 @@
 - **Test Requirements**:
   - `programmatic` TR-5.1: 项目能够成功构建
   - `programmatic` TR-5.2: 构建过程中没有错误
-- **Notes**: 运行 `pnpm build` 命令验证构建
+- **Notes**: 运行 `npm run build` 命令验证构建，构建成功
 
-## [ ] Task 6: 清理相关配置和文档
+## [x] Task 6: 清理相关配置和文档
 - **Priority**: P2
 - **Depends On**: Task 5
 - **Description**: 
@@ -73,3 +73,7 @@
   - `human-judgment` TR-6.1: 确认配置选项已清理
   - `human-judgment` TR-6.2: 确认文档已更新
 - **Notes**: 这是可选任务，根据实际情况决定是否需要
+
+**清理内容**:
+- 移除了与语言支持相关的配置选项：`autoFormatOnSave`, `enableCodeLens`, `enableResourceValidation`, `enableDiagnostics`, `enablePerfLens`
+- 移除了 debuggers 中对 arkts 语言的引用
